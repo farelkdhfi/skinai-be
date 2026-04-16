@@ -66,6 +66,10 @@ router.get('/', authMiddleware, async (req, res) => {
  * Get single analysis by ID
  */
 router.get('/:id', authMiddleware, async (req, res) => {
+
+    console.log("USER ID:", req.user?.id);
+    console.log("TOKEN HEADER:", req.headers.authorization);
+
     if (!isSupabaseConfigured()) {
         return res.status(503).json({ error: 'Database not configured' });
     }
