@@ -198,105 +198,30 @@ router.post('/', authMiddleware, async (req, res) => {
  * Delete an analysis
  */
 router.delete('/:id', authMiddleware, async (req, res) => {
-    if (!isSupabaseConfigured()) {
-        return res.status(503).json({ error: 'Database not configured' });
-    }
-
     const userId = req.user.id;
     const analysisId = req.params.id;
 
     try {
-        // 1. Fetch analysis details using the Supabase client associated with the user
-        const { data: analysis, error: fetchError } = await retryAsync(() => supabase
-            .from('analyses')
-            .select('*, analysis_patches(*)')
-            .eq('id', analysisId)
-            .eq('user_id', userId)
-            .single()
-        )
-
-        if (fetchError || !analysis) {
-            // If not found, it might already be deleted or doesn't belong to user
-            return res.status(404).json({ error: 'Analysis not found' });
-        }
-
-        // 2. Collect all image paths
-        const pathsToDelete = [];
-
-        // Helper to extract path from public URL
-        const getPathFromUrl = (url) => {
-            if (!url) return null;
-            try {
-                const parts = url.split('/analysis-images/');
-                if (parts.length === 2) {
-                    return parts[1];
-                }
-                return null;
-            } catch (e) {
-                return null;
-            }
-        };
-
-        if (analysis.image_url) pathsToDelete.push(getPathFromUrl(analysis.image_url));
-        if (analysis.heatmap_image_url) pathsToDelete.push(getPathFromUrl(analysis.heatmap_image_url));
-
-        if (analysis.analysis_patches && analysis.analysis_patches.length > 0) {
-            analysis.analysis_patches.forEach(patch => {
-                if (patch.image_url) pathsToDelete.push(getPathFromUrl(patch.image_url));
-                if (patch.heatmap_image_url) pathsToDelete.push(getPathFromUrl(patch.heatmap_image_url));
-            });
-        }
-
-        // Filter out nulls
-        const validPaths = pathsToDelete.filter(p => p !== null);
-
-        // 3. Delete files from Storage if any
-        if (validPaths.length > 0) {
-            const token = req.headers.authorization.split(' ')[1];
-            const supabaseClient = createClient(
-                process.env.SUPABASE_URL,
-                process.env.SUPABASE_ANON_KEY,
-                {
-                    global: {
-                        headers: {
-                            Authorization: `Bearer ${token}`
-                        }
-                    }
-                }
-            );
-
-            const { error: storageError } = await supabaseClient
-                .storage
-                .from('analysis-images')
-                .remove(validPaths);
-
-            if (storageError) {
-                console.error('Storage delete warning:', storageError);
-            }
-        }
-
-        // 4. Delete patches
-        await retryAsync(() => supabase
-            .from('analysis_patches')
-            .delete()
-            .eq('analysis_id', analysisId))
-
-        // 5. Delete analysis
-        const { error: deleteError } = await retryAsync(() => supabase
+        // langsung delete aja (simple & cepat)
+        const { error } = await supabase
             .from('analyses')
             .delete()
             .eq('id', analysisId)
-            .eq('user_id', userId)
-        )
+            .eq('user_id', userId);
 
-        if (deleteError) {
-            return res.status(500).json({ error: 'Failed to delete analysis record' });
+        if (error) {
+            console.error('Delete error:', error);
+            return res.status(500).json({ error: 'Failed to delete' });
         }
 
-        res.json({ status: 'success', message: 'Analysis and images deleted' });
+        return res.json({
+            status: 'success',
+            message: 'Deleted successfully'
+        });
+
     } catch (err) {
-        console.error('Delete error:', err);
-        res.status(500).json({ error: 'Failed to delete analysis' });
+        console.error('Server error:', err);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 
