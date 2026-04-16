@@ -102,113 +102,6 @@ router.get('/:id', authMiddleware, async (req, res) => {
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 
-async function uploadToSupabase(base64String, userId, token) {
-    if (!base64String) return null;
-
-    try {
-        // Remove header if present
-        const matches = base64String.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-
-        let buffer;
-        let contentType = 'image/jpeg';
-        let ext = 'jpg';
-
-        if (matches && matches.length === 3) {
-            contentType = matches[1];
-            ext = contentType.split('/')[1];
-            buffer = Buffer.from(matches[2], 'base64');
-        } else {
-            buffer = Buffer.from(base64String, 'base64');
-        }
-
-        const filename = `${crypto.randomUUID()}.${ext}`;
-        const filePath = `${userId}/${filename}`;
-
-        // Create a client with the user's token to respect RLS
-        const supabaseClient = createClient(
-            process.env.SUPABASE_URL,
-            process.env.SUPABASE_ANON_KEY,
-            {
-                global: {
-                    headers: {
-                        Authorization: `Bearer ${token}`
-                    }
-                }
-            }
-        );
-
-        const { data, error } = await supabaseClient
-            .storage
-            .from('analysis-images')
-            .upload(filePath, buffer, {
-                contentType,
-                upsert: false
-            });
-
-        if (error) {
-            console.error('Supabase upload error DETAIL:', JSON.stringify(error));
-            console.error('Upload info:', { filePath, contentType, bufferSize: buffer.length, userId });
-            throw error;
-        }
-
-        // Get public URL
-        const { data: { publicUrl } } = supabaseClient
-            .storage
-            .from('analysis-images')
-            .getPublicUrl(filePath);
-
-        return publicUrl;
-    } catch (err) {
-        console.error('Image upload error:', err);
-        return null;
-    }
-}
-
-/**
- * Upload gambar di background setelah response dikirim ke user
- */
-async function uploadImagesInBackground({ analysis, image, heatmap_image, patches, userId, token }) {
-    try {
-        // Upload gambar utama
-        const [imageUrl, heatmapUrl] = await Promise.all([
-            uploadToSupabase(image, userId, token),
-            uploadToSupabase(heatmap_image, userId, token)
-        ]);
-
-        // Update URL gambar utama di database
-        await supabase
-            .from('analyses')
-            .update({ image_url: imageUrl, heatmap_image_url: heatmapUrl })
-            .eq('id', analysis.id);
-
-        // Upload gambar patches
-        if (patches && patches.length > 0) {
-            const { data: savedPatches } = await supabase
-                .from('analysis_patches')
-                .select('id, region')
-                .eq('analysis_id', analysis.id);
-
-            for (const savedPatch of (savedPatches || [])) {
-                const originalPatch = patches.find(p => p.region === savedPatch.region);
-                if (!originalPatch) continue;
-
-                const [patchUrl, patchHeatmapUrl] = await Promise.all([
-                    uploadToSupabase(originalPatch.image, userId, token),
-                    uploadToSupabase(originalPatch.heatmap_image, userId, token)
-                ]);
-
-                await supabase
-                    .from('analysis_patches')
-                    .update({ image_url: patchUrl, heatmap_image_url: patchHeatmapUrl })
-                    .eq('id', savedPatch.id);
-            }
-        }
-
-        console.log(`✅ Background upload selesai untuk analysis ${analysis.id}`);
-    } catch (err) {
-        console.error(`❌ Background upload gagal untuk analysis ${analysis.id}:`, err.message);
-    }
-}
 
 /**
  * POST /api/history
@@ -229,9 +122,9 @@ router.post('/', authMiddleware, async (req, res) => {
         patches_analyzed,
         voting_method,
         patches,
-        image,         // Base64 full image
-        heatmap_image, // Base64 heatmap
-        recommended_ingredients // Array of strings or objects
+        image_url,
+        heatmap_image_url,
+        recommended_ingredients
     } = req.body;
 
     // Validation
@@ -249,8 +142,8 @@ router.post('/', authMiddleware, async (req, res) => {
                 confidence_score,
                 patches_analyzed: patches_analyzed || patches?.length || 0,
                 voting_method: voting_method || 'majority',
-                image_url: null,        // kosong dulu
-                heatmap_image_url: null, // kosong dulu
+                image_url: image_url || null,
+                heatmap_image_url: heatmap_image_url || null,
                 recommended_ingredients
             })
             .select()
@@ -269,8 +162,8 @@ router.post('/', authMiddleware, async (req, res) => {
                 region: p.region,
                 predicted_class: p.predicted_class,
                 confidence: p.confidence,
-                image_url: null,        // kosong dulu
-                heatmap_image_url: null  // kosong dulu
+                image_url: p.image_url || null,
+                heatmap_image_url: p.heatmap_image_url || null
             }));
 
             const { error: patchError } = await retryAsync(() => supabase
@@ -289,9 +182,6 @@ router.post('/', authMiddleware, async (req, res) => {
             message: 'Analysis saved',
             analysis
         });
-
-        // Upload gambar di background (setelah response dikirim)
-        uploadImagesInBackground({ analysis, image, heatmap_image, patches, userId, token });
 
     } catch (err) {
         console.error('Save history error:', err);
