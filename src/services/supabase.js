@@ -1,42 +1,19 @@
 /**
  * Supabase Client
- * Uses lazy initialization to ensure env vars are loaded
+ * Eager initialization - langsung konek saat server start
  */
 
 import { createClient } from '@supabase/supabase-js';
 
-let supabaseInstance = null;
-let initialized = false;
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
-/**
- * Get or create Supabase client (lazy initialization)
- */
-function getSupabase() {
-    if (!initialized) {
-        initialized = true;
-        const supabaseUrl = process.env.SUPABASE_URL;
-        const supabaseKey = process.env.SUPABASE_ANON_KEY;
-
-        if (!supabaseUrl || !supabaseKey) {
-            console.warn('⚠️ Supabase credentials not configured. Database features disabled.');
-            supabaseInstance = null;
-        } else {
-            console.log('✅ Supabase client initialized');
-            supabaseInstance = createClient(supabaseUrl, supabaseKey);
-        }
-    }
-    return supabaseInstance;
+if (!supabaseUrl || !supabaseKey) {
+  console.warn('⚠️  Supabase credentials not configured. Database features disabled.');
 }
 
-// Export a proxy object that lazily gets supabase client
-export const supabase = new Proxy({}, {
-    get(target, prop) {
-        const client = getSupabase();
-        if (!client) return undefined;
-        const value = client[prop];
-        return typeof value === 'function' ? value.bind(client) : value;
-    }
-});
+export const supabase = (supabaseUrl && supabaseKey)
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
 
-export const isSupabaseConfigured = () => getSupabase() !== null;
-
+export const isSupabaseConfigured = () => supabase !== null;
