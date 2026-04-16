@@ -7,6 +7,21 @@ import express from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { authMiddleware } from '../middleware/auth.js';
 
+const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
+const retryAsync = async (fn, retries = 2, delayMs = 500) => {
+    try {
+        return await fn();
+    } catch (err) {
+        console.log("RETRY:", err.message);
+
+        if (retries <= 0) throw err;
+
+        await delay(delayMs);
+        return retryAsync(fn, retries - 1, delayMs);
+    }
+};
+
 const router = express.Router();
 
 /**
@@ -22,12 +37,13 @@ router.get('/', authMiddleware, async (req, res) => {
     const { limit = 50, offset = 0 } = req.query;
 
     try {
-        const { data, error, count } = await supabase
+        const { data, error, count } = await retryAsync(() => supabase
             .from('analyses')
             .select('*, analysis_patches(*)', { count: 'exact' })
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
-            .range(offset, offset + limit - 1);
+            .range(offset, offset + limit - 1)
+        )
 
         if (error) {
             console.error('History fetch error:', error);
@@ -58,12 +74,13 @@ router.get('/:id', authMiddleware, async (req, res) => {
     const analysisId = req.params.id;
 
     try {
-        const { data, error } = await supabase
+        const { data, error } = await retryAsync(() => supabase
             .from('analyses')
             .select('*, analysis_patches(*)')
             .eq('id', analysisId)
             .eq('user_id', userId)
-            .single();
+            .single()
+        )
 
         if (error || !data) {
             return res.status(404).json({ error: 'Analysis not found' });
@@ -183,7 +200,7 @@ router.post('/', authMiddleware, async (req, res) => {
         ]);
 
         // Insert analysis
-        const { data: analysis, error: analysisError } = await supabase
+        const { data: analysis, error: analysisError } = await retryAsync(() => supabase
             .from('analyses')
             .insert({
                 user_id: userId,
@@ -196,7 +213,8 @@ router.post('/', authMiddleware, async (req, res) => {
                 recommended_ingredients
             })
             .select()
-            .single();
+            .single()
+        )
 
         if (analysisError) {
             console.error('Analysis insert error:', analysisError);
@@ -205,26 +223,28 @@ router.post('/', authMiddleware, async (req, res) => {
 
         // Insert patches if provided
         if (patches && patches.length > 0) {
-            // Upload patch images in parallel
-            const patchRecords = await Promise.all(patches.map(async (p) => {
+            const patchRecords = [];
+
+            for (const p of patches) {
                 const [patchUrl, patchHeatmapUrl] = await Promise.all([
                     uploadToSupabase(p.image, userId, token),
                     uploadToSupabase(p.heatmap_image, userId, token)
                 ]);
 
-                return {
+                patchRecords.push({
                     analysis_id: analysis.id,
                     region: p.region,
                     predicted_class: p.predicted_class,
                     confidence: p.confidence,
                     image_url: patchUrl,
                     heatmap_image_url: patchHeatmapUrl
-                };
-            }));
+                });
+            }
 
-            const { error: patchError } = await supabase
+            const { error: patchError } = await retryAsync(() => supabase
                 .from('analysis_patches')
-                .insert(patchRecords);
+                .insert(patchRecords)
+            )
 
             if (patchError) {
                 console.error('Patch insert error:', patchError);
@@ -256,12 +276,13 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
     try {
         // 1. Fetch analysis details using the Supabase client associated with the user
-        const { data: analysis, error: fetchError } = await supabase
+        const { data: analysis, error: fetchError } = await retryAsync(() => supabase
             .from('analyses')
             .select('*, analysis_patches(*)')
             .eq('id', analysisId)
             .eq('user_id', userId)
-            .single();
+            .single()
+        )
 
         if (fetchError || !analysis) {
             // If not found, it might already be deleted or doesn't belong to user
@@ -324,17 +345,18 @@ router.delete('/:id', authMiddleware, async (req, res) => {
         }
 
         // 4. Delete patches
-        await supabase
+        await retryAsync(() => supabase
             .from('analysis_patches')
             .delete()
-            .eq('analysis_id', analysisId);
+            .eq('analysis_id', analysisId))
 
         // 5. Delete analysis
-        const { error: deleteError } = await supabase
+        const { error: deleteError } = await retryAsync(() => supabase
             .from('analyses')
             .delete()
             .eq('id', analysisId)
-            .eq('user_id', userId);
+            .eq('user_id', userId)
+        )
 
         if (deleteError) {
             return res.status(500).json({ error: 'Failed to delete analysis record' });
