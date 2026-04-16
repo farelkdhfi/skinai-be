@@ -164,6 +164,52 @@ async function uploadToSupabase(base64String, userId, token) {
 }
 
 /**
+ * Upload gambar di background setelah response dikirim ke user
+ */
+async function uploadImagesInBackground({ analysis, image, heatmap_image, patches, userId, token }) {
+    try {
+        // Upload gambar utama
+        const [imageUrl, heatmapUrl] = await Promise.all([
+            uploadToSupabase(image, userId, token),
+            uploadToSupabase(heatmap_image, userId, token)
+        ]);
+
+        // Update URL gambar utama di database
+        await supabase
+            .from('analyses')
+            .update({ image_url: imageUrl, heatmap_image_url: heatmapUrl })
+            .eq('id', analysis.id);
+
+        // Upload gambar patches
+        if (patches && patches.length > 0) {
+            const { data: savedPatches } = await supabase
+                .from('analysis_patches')
+                .select('id, region')
+                .eq('analysis_id', analysis.id);
+
+            for (const savedPatch of (savedPatches || [])) {
+                const originalPatch = patches.find(p => p.region === savedPatch.region);
+                if (!originalPatch) continue;
+
+                const [patchUrl, patchHeatmapUrl] = await Promise.all([
+                    uploadToSupabase(originalPatch.image, userId, token),
+                    uploadToSupabase(originalPatch.heatmap_image, userId, token)
+                ]);
+
+                await supabase
+                    .from('analysis_patches')
+                    .update({ image_url: patchUrl, heatmap_image_url: patchHeatmapUrl })
+                    .eq('id', savedPatch.id);
+            }
+        }
+
+        console.log(`✅ Background upload selesai untuk analysis ${analysis.id}`);
+    } catch (err) {
+        console.error(`❌ Background upload gagal untuk analysis ${analysis.id}:`, err.message);
+    }
+}
+
+/**
  * POST /api/history
  * Save new analysis result
  */
@@ -193,13 +239,7 @@ router.post('/', authMiddleware, async (req, res) => {
     }
 
     try {
-        // Upload images to Supabase Storage
-        const [imageUrl, heatmapUrl] = await Promise.all([
-            uploadToSupabase(image, userId, token),
-            uploadToSupabase(heatmap_image, userId, token)
-        ]);
-
-        // Insert analysis
+        // Simpan ke database DULU tanpa gambar
         const { data: analysis, error: analysisError } = await retryAsync(() => supabase
             .from('analyses')
             .insert({
@@ -208,54 +248,50 @@ router.post('/', authMiddleware, async (req, res) => {
                 confidence_score,
                 patches_analyzed: patches_analyzed || patches?.length || 0,
                 voting_method: voting_method || 'majority',
-                image_url: imageUrl,
-                heatmap_image_url: heatmapUrl,
+                image_url: null,        // kosong dulu
+                heatmap_image_url: null, // kosong dulu
                 recommended_ingredients
             })
             .select()
             .single()
-        )
+        );
 
         if (analysisError) {
             console.error('Analysis insert error:', analysisError);
             return res.status(500).json({ error: 'Failed to save analysis' });
         }
 
-        // Insert patches if provided
+        // Simpan patches ke database DULU tanpa gambar
         if (patches && patches.length > 0) {
-            const patchRecords = [];
-
-            for (const p of patches) {
-                const [patchUrl, patchHeatmapUrl] = await Promise.all([
-                    uploadToSupabase(p.image, userId, token),
-                    uploadToSupabase(p.heatmap_image, userId, token)
-                ]);
-
-                patchRecords.push({
-                    analysis_id: analysis.id,
-                    region: p.region,
-                    predicted_class: p.predicted_class,
-                    confidence: p.confidence,
-                    image_url: patchUrl,
-                    heatmap_image_url: patchHeatmapUrl
-                });
-            }
+            const patchRecords = patches.map(p => ({
+                analysis_id: analysis.id,
+                region: p.region,
+                predicted_class: p.predicted_class,
+                confidence: p.confidence,
+                image_url: null,        // kosong dulu
+                heatmap_image_url: null  // kosong dulu
+            }));
 
             const { error: patchError } = await retryAsync(() => supabase
                 .from('analysis_patches')
                 .insert(patchRecords)
-            )
+            );
 
             if (patchError) {
                 console.error('Patch insert error:', patchError);
             }
         }
 
+        // Balas frontend DULUAN — user udah bisa lanjut
         res.status(201).json({
             status: 'success',
             message: 'Analysis saved',
             analysis
         });
+
+        // Upload gambar di background (setelah response dikirim)
+        uploadImagesInBackground({ analysis, image, heatmap_image, patches, userId, token });
+
     } catch (err) {
         console.error('Save history error:', err);
         res.status(500).json({ error: 'Failed to save analysis' });
