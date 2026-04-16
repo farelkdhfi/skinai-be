@@ -6,6 +6,7 @@
 import express from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { retryAsync } from '../utils/retry.js';
 
 const router = express.Router();
 
@@ -22,11 +23,18 @@ router.get('/', authMiddleware, async (req, res) => {
 
     try {
         // Get all analyses for user
-        const { data: analyses, error } = await supabase
+        const { data: analyses, error } = await retryAsync(() => supabase
             .from('analyses')
-            .select('*')
+            .select(`
+                id,
+                skin_condition,
+                confidence_score,
+                created_at
+            `)
             .eq('user_id', userId)
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .limit(100)
+        );
 
         if (error) {
             console.error('Dashboard fetch error:', error);
@@ -36,7 +44,6 @@ router.get('/', authMiddleware, async (req, res) => {
         // Calculate statistics
         const stats = calculateStats(analyses || []);
 
-        // Prepare trend data
         // Prepare trend data
         const trendData = (analyses || []).slice(0, 30).map(a => ({
             date: new Date(a.created_at).toLocaleDateString(),
