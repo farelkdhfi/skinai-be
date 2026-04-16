@@ -12,6 +12,48 @@ const router = express.Router();
  * POST /api/auth/register
  * Register a new user
  */
+
+async function registerWithRetry(email, password, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const { data, error } = await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                    emailRedirectTo: "https://skinai.my.id/success"
+                }
+            });
+
+            if (!error) return data;
+
+            // ❌ STOP kalau error logic (jangan retry)
+            if (
+                error.message.includes('User already registered') ||
+                error.message.includes('Invalid email') ||
+                error.message.includes('Password')
+            ) {
+                throw error;
+            }
+
+            // selain itu anggap retryable
+            throw error;
+
+        } catch (err) {
+            console.log(`Register attempt ${i + 1} failed`);
+
+            // ❌ kalau bukan network error → langsung stop
+            if (err.code !== 'UND_ERR_CONNECT_TIMEOUT') {
+                throw err;
+            }
+
+            // ❌ kalau udah terakhir → lempar error
+            if (i === retries - 1) throw err;
+
+            await new Promise(res => setTimeout(res, 1000));
+        }
+    }
+}
+
 router.post('/register', async (req, res) => {
     if (!isSupabaseConfigured()) {
         return res.status(503).json({ error: 'Database not configured' });
@@ -23,30 +65,42 @@ router.post('/register', async (req, res) => {
         return res.status(400).json({ error: 'Email and password required' });
     }
 
-    try {
-        const { data, error } = await supabase.auth.signUp({
-            email,
-            password,
-	    options: {
-    		emailRedirectTo: "https://skinai.my.id/success"
-  	    }
-        });
+    if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
 
-        if (error) {
-            return res.status(400).json({ error: error.message });
+    try {
+        const data = await registerWithRetry(email, password);
+
+        if (!data.user) {
+            return res.status(500).json({
+                error: 'Registration succeeded but user not returned'
+            });
         }
 
         res.status(201).json({
             status: 'success',
             message: 'Registration successful. Please check your email to verify.',
-            user: data.user ? {
+            user: {
                 id: data.user.id,
                 email: data.user.email
-            } : null
+            }
         });
+
     } catch (err) {
         console.error('Registration error:', err);
-        res.status(500).json({ error: 'Registration failed' });
+
+        if (err.message?.toLowerCase().includes('already registered')) {
+            return res.status(400).json({ error: 'Email already registered' });
+        }
+
+        if (err.code === 'UND_ERR_CONNECT_TIMEOUT') {
+            return res.status(503).json({
+                error: 'Server busy, please try again'
+            });
+        }
+
+        return res.status(500).json({ error: 'Registration failed' });
     }
 });
 
@@ -76,9 +130,23 @@ router.post('/login', async (req, res) => {
 
                 if (!error) return data;
 
+                // ❌ jangan retry kalau error logic
+                if (
+                    error.message.includes('Invalid login credentials') ||
+                    error.message.includes('Email not confirmed')
+                ) {
+                    throw error;
+                }
+
                 throw error;
+
             } catch (err) {
                 console.log(`Login attempt ${i + 1} failed`);
+
+                // ❌ stop kalau bukan network error
+                if (err.code !== 'UND_ERR_CONNECT_TIMEOUT') {
+                    throw err;
+                }
 
                 if (i === retries - 1) throw err;
 
