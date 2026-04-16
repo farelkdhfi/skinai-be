@@ -11,7 +11,15 @@ const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
 const retryAsync = async (fn, retries = 2, delayMs = 500) => {
     try {
-        return await fn();
+        const result = await fn();
+
+        // 🔥 penting: detect supabase error
+        if (result?.error) {
+            throw new Error(result.error.message);
+        }
+
+        return result;
+
     } catch (err) {
         console.log("RETRY:", err.message);
 
@@ -28,21 +36,28 @@ const router = express.Router();
  * GET /api/history
  * Get user's analysis history
  */
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', authMiddleware, async (req, res) => { 
     if (!isSupabaseConfigured()) {
         return res.status(503).json({ error: 'Database not configured' });
     }
 
     const userId = req.user.id;
-    const { limit = 50, offset = 0 } = req.query;
+    const limitNum = Math.min(parseInt(req.query.limit) || 50, 50);
+    const offsetNum = parseInt(req.query.offset) || 0;
 
     try {
         const { data, error, count } = await retryAsync(() => supabase
             .from('analyses')
-            .select('*, analysis_patches(*)', { count: 'exact' })
+            .select(`
+                id,
+                skin_condition,
+                confidence_score,
+                created_at,
+                image_url
+            `, { count: 'exact' })
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
-            .range(offset, offset + limit - 1)
+            .range(offsetNum, offsetNum + limitNum - 1)
         )
 
         if (error) {
@@ -66,9 +81,6 @@ router.get('/', authMiddleware, async (req, res) => {
  * Get single analysis by ID
  */
 router.get('/:id', authMiddleware, async (req, res) => {
-
-    console.log("USER ID:", req.user?.id);
-    console.log("TOKEN HEADER:", req.headers.authorization);
 
     if (!isSupabaseConfigured()) {
         return res.status(503).json({ error: 'Database not configured' });
@@ -99,12 +111,6 @@ router.get('/:id', authMiddleware, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch analysis' });
     }
 });
-
-/**
- * Helper to upload image to Supabase Storage
- */
-import { createClient } from '@supabase/supabase-js';
-import crypto from 'crypto';
 
 
 /**
