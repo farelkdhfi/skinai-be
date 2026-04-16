@@ -1,19 +1,6 @@
-/**
- * Auth Middleware
- * Verify JWT token from Supabase
- */
+import jwt from 'jsonwebtoken';
 
-import { supabase, isSupabaseConfigured } from '../services/supabase.js';
-
-/**
- * Middleware to authenticate requests
- * Extracts user from Bearer token
- */
 export const authMiddleware = async (req, res, next) => {
-    if (!isSupabaseConfigured()) {
-        return res.status(503).json({ error: 'Database not configured' });
-    }
-
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -23,17 +10,22 @@ export const authMiddleware = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
 
     try {
-        const { data: { user }, error } = await supabase.auth.getUser(token);
+        // Decode token TANPA call Supabase
+        const decoded = jwt.decode(token);
 
-        if (error || !user) {
-            return res.status(401).json({ error: 'Invalid or expired token' });
+        if (!decoded) {
+            return res.status(401).json({ error: 'Invalid token' });
         }
 
-        // Attach user to request
-        req.user = user;
+        // Ambil user dari token
+        req.user = {
+            id: decoded.sub,
+            email: decoded.email
+        };
+
         next();
     } catch (err) {
-        console.error('Auth middleware error:', err);
+        console.error('Auth error:', err);
         res.status(401).json({ error: 'Authentication failed' });
     }
 };
@@ -45,7 +37,7 @@ export const authMiddleware = async (req, res, next) => {
 export const optionalAuth = async (req, res, next) => {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ') || !isSupabaseConfigured()) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
         req.user = null;
         return next();
     }
@@ -53,8 +45,16 @@ export const optionalAuth = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
 
     try {
-        const { data: { user } } = await supabase.auth.getUser(token);
-        req.user = user || null;
+        const decoded = jwt.decode(token);
+
+        if (!decoded) {
+            req.user = null;
+        } else {
+            req.user = {
+                id: decoded.sub,
+                email: decoded.email
+            };
+        }
     } catch {
         req.user = null;
     }
