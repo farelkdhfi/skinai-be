@@ -29,7 +29,8 @@ router.get('/', authMiddleware, async (req, res) => {
                 id,
                 skin_condition,
                 confidence_score,
-                created_at
+                created_at,
+                image_url
             `)
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
