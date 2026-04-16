@@ -1,6 +1,6 @@
 const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
-const retryAsync = async (fn, retries = 2, delayMs = 500) => {
+export const retryAsync = async (fn, retries = 2, delayMs = 500) => {
     try {
         const result = await fn();
 
@@ -20,6 +20,3 @@ const retryAsync = async (fn, retries = 2, delayMs = 500) => {
         return retryAsync(fn, retries - 1, delayMs);
     }
 };
-
-// Export supaya bisa dipake di file lain
-module.exports = { retryAsync };
