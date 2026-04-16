@@ -26,16 +26,26 @@ const PORT = process.env.PORT || 4000;
 // MIDDLEWARE
 // =============================================================================
 
+// Cors
+app.use(cors({
+    origin: [
+        'http://localhost:3000', 
+        'http://localhost:5173', 
+        'http://localhost:5174', 
+        'https://skinai.my.id'
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    credentials: true
+}));
+
+app.options('*', cors());
+
 // Security headers
 app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// CORS
-app.use(cors({
-    origin: ['http://localhost:3000', 'http://localhost:5174', 'http://localhost:5173', 'https://skinai-two.vercel.app/', 'http://172.20.10.3:5173', 'https://192.168.18.61:5173'],
-    credentials: true
-}));
 
 // Request logging
 app.use(morgan('dev'));

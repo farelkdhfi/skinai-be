@@ -26,7 +26,10 @@ router.post('/register', async (req, res) => {
     try {
         const { data, error } = await supabase.auth.signUp({
             email,
-            password
+            password,
+	    options: {
+    		emailRedirectTo: "https://skinai.my.id/success"
+  	    }
         });
 
         if (error) {
@@ -62,15 +65,30 @@ router.post('/login', async (req, res) => {
         return res.status(400).json({ error: 'Email and password required' });
     }
 
-    try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password
-        });
+    // 🔥 function retry
+    async function loginWithRetry(email, password, retries = 3) {
+        for (let i = 0; i < retries; i++) {
+            try {
+                const { data, error } = await supabase.auth.signInWithPassword({
+                    email,
+                    password
+                });
 
-        if (error) {
-            return res.status(401).json({ error: error.message });
+                if (!error) return data;
+
+                throw error;
+            } catch (err) {
+                console.log(`Login attempt ${i + 1} failed`);
+
+                if (i === retries - 1) throw err;
+
+                await new Promise(res => setTimeout(res, 1000));
+            }
         }
+    }
+
+    try {
+        const data = await loginWithRetry(email, password);
 
         res.json({
             status: 'success',
@@ -82,9 +100,20 @@ router.post('/login', async (req, res) => {
                 email: data.user.email
             }
         });
+
     } catch (err) {
-        console.error('Login error:', err);
-        res.status(500).json({ error: 'Login failed' });
+        console.error("LOGIN ERROR:", err);
+
+        // 🔥 handle timeout khusus
+        if (err.code === 'UND_ERR_CONNECT_TIMEOUT') {
+            return res.status(503).json({
+                error: 'Server busy, please try again'
+            });
+        }
+
+        return res.status(401).json({
+            error: err.message || 'Invalid login'
+        });
     }
 });
 
