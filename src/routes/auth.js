@@ -172,4 +172,37 @@ router.get('/me', async (req, res) => {
     }
 });
 
+/**
+ * POST /api/auth/refresh
+ * Refresh access token
+ */
+router.post('/refresh', async (req, res) => {
+    if (!isSupabaseConfigured()) {
+        return res.status(503).json({ error: 'Database not configured' });
+    }
+
+    const { refresh_token } = req.body;
+
+    if (!refresh_token) {
+        return res.status(400).json({ error: 'Refresh token required' });
+    }
+
+    try {
+        const { data, error } = await supabase.auth.refreshSession({ refresh_token });
+
+        if (error || !data.session) {
+            return res.status(401).json({ error: 'Invalid refresh token' });
+        }
+
+        res.json({
+            status: 'success',
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token,
+        });
+    } catch (err) {
+        console.error('Refresh token error:', err);
+        res.status(500).json({ error: 'Failed to refresh token' });
+    }
+});
+
 export default router;
