@@ -146,7 +146,8 @@ async function uploadToSupabase(base64String, userId, token) {
             });
 
         if (error) {
-            console.error('Supabase upload error:', error);
+            console.error('Supabase upload error DETAIL:', JSON.stringify(error));
+            console.error('Upload info:', { filePath, contentType, bufferSize: buffer.length, userId });
             throw error;
         }
 
