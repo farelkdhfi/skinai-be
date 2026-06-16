@@ -16,7 +16,8 @@ const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:5000';
  * Forward to ML service for prediction with Grad-CAM
  */
 router.post('/', optionalAuth, async (req, res) => {
-    const { images, full_face_image, bounding_boxes } = req.body;
+    // TAMBAHAN: Tangkap aggregation_method dari frontend
+    const { images, full_face_image, bounding_boxes, aggregation_method } = req.body;
 
     if (!images || typeof images !== 'object' || Object.keys(images).length === 0) {
         return res.status(400).json({ error: 'No images provided' });
@@ -27,7 +28,8 @@ router.post('/', optionalAuth, async (req, res) => {
         const mlPayload = {
             images: images,
             full_face_image: full_face_image || null,
-            bounding_boxes: bounding_boxes || null
+            bounding_boxes: bounding_boxes || null,
+            aggregation_method: aggregation_method || 'racwv' // TAMBAHAN: Teruskan ke ML Service
         };
 
         // Call ML service
@@ -64,7 +66,8 @@ router.post('/', optionalAuth, async (req, res) => {
  * Forward to ML service for prediction only (no Grad-CAM)
  */
 router.post('/predict-only', optionalAuth, async (req, res) => {
-    const { images } = req.body;
+    // TAMBAHAN: Tangkap aggregation_method dari frontend
+    const { images, aggregation_method } = req.body;
 
     if (!images || typeof images !== 'object') {
         return res.status(400).json({ error: 'No images provided' });
@@ -73,7 +76,8 @@ router.post('/predict-only', optionalAuth, async (req, res) => {
     try {
         const response = await axios.post(
             `${ML_SERVICE_URL}/predict`,
-            { images },
+            // TAMBAHAN: Teruskan ke ML Service
+            { images, aggregation_method: aggregation_method || 'racwv' },
             { timeout: 15000 }
         );
 
